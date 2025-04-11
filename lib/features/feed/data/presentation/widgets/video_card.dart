@@ -1,10 +1,12 @@
 import 'package:bluesky_video_feed/features/feed/data/models/post_model.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:chewie/chewie.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:bluesky_video_feed/core/utils/video_util.dart';
 
 class VideoCard extends StatefulWidget {
- final PostModel post;
+  final PostModel post;
   final bool isCurrentVideo;
 
   const VideoCard({
@@ -19,174 +21,177 @@ class VideoCard extends StatefulWidget {
 
 class _VideoCardState extends State<VideoCard> {
   VideoPlayerController? _controller;
-  bool _isPlaying = false;
+  ChewieController? _chewieController;
   bool _isInitialized = false;
-  bool _showControls = true;
+  String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    _initializeVideo();
-  }
-
-  @override
-  void didUpdateWidget(VideoCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    
-    // Controla o play/pause quando o vídeo atual muda
-    if (widget.isCurrentVideo != oldWidget.isCurrentVideo) {
-      if (widget.isCurrentVideo) {
-        _playVideo();
-      } else {
-        _pauseVideo();
-      }
+    if (widget.post.hasVideo) {
+      _loadVideo(widget.post.videoUrl!);
     }
   }
 
-  Future<void> _initializeVideo() async {
-    if (widget.post.videoUrl != null) {
-      _controller = VideoPlayerController.networkUrl(Uri.parse(widget.post.videoUrl!));
+  Future<void> _loadVideo(String url) async {
+    try {
+      final controller = VideoPlayerController.networkUrl(
+        Uri.parse(url),
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: true,
+        ),
+      );
+
+      await controller.initialize();
       
-      await _controller!.initialize();
-      
+      if (!controller.value.isInitialized) {
+        setState(() {
+          _errorMessage = 'Falha ao inicializar o vídeo';
+        });
+        return;
+      }
+
+      _chewieController = ChewieController(
+        videoPlayerController: controller,
+        autoPlay: false,
+        looping: true,
+        allowFullScreen: true,
+        allowMuting: true,
+        allowPlaybackSpeedChanging: true,
+        aspectRatio: controller.value.aspectRatio,
+        placeholder: widget.post.thumbnailUrl != null
+            ? Image.network(widget.post.thumbnailUrl!)
+            : null,
+      );
+
       setState(() {
+        _controller = controller;
         _isInitialized = true;
-        _isPlaying = widget.isCurrentVideo;
       });
-      
-      if (widget.isCurrentVideo) {
-        _playVideo();
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Erro ao carregar vídeo';
+      });
+    }
+  }
+
+  Widget _buildContent() {
+    if (!widget.post.hasContent) {
+      return const Center(
+        child: Text('Nenhum conteúdo disponível'),
+      );
+    }
+
+    if (widget.post.hasVideo) {
+      if (_errorMessage != null) {
+        return Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 8),
+              Text(
+                _errorMessage!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.red),
+              ),
+            ],
+          ),
+        );
       }
-      
-      // Configura loop do vídeo
-      _controller!.setLooping(true);
-    }
-  }
 
-  void _playVideo() {
-    if (_controller != null && _isInitialized) {
-      _controller!.play();
-      setState(() {
-        _isPlaying = true;
-      });
-      
-      // Oculta os controles após 2 segundos
-      Future.delayed(const Duration(seconds: 2), () {
-        if (mounted) {
-          setState(() {
-            _showControls = false;
-          });
-        }
-      });
-    }
-  }
+      if (_isInitialized) {
+        return widget.post.videoUrl!.toLowerCase().endsWith('.gif')
+            ? Image.network(
+                widget.post.videoUrl!,
+                fit: BoxFit.contain,
+              )
+            : _chewieController != null
+                ? Chewie(controller: _chewieController!)
+                : const Center(child: CircularProgressIndicator());
+      }
 
-  void _pauseVideo() {
-    if (_controller != null && _isInitialized) {
-      _controller!.pause();
-      setState(() {
-        _isPlaying = false;
-        _showControls = true;
-      });
+      return const Center(child: CircularProgressIndicator());
     }
-  }
 
-  void _togglePlayPause() {
-    if (_isPlaying) {
-      _pauseVideo();
-    } else {
-      _playVideo();
+    if (widget.post.hasImages) {
+      return PageView.builder(
+        itemCount: widget.post.images!.length,
+        itemBuilder: (context, index) {
+          return CachedNetworkImage(
+            imageUrl: widget.post.images![index],
+            fit: BoxFit.contain,
+            placeholder: (context, url) => const Center(
+              child: CircularProgressIndicator(),
+            ),
+            errorWidget: (context, url, error) => const Center(
+              child: Icon(Icons.error_outline, color: Colors.red),
+            ),
+          );
+        },
+      );
     }
-  }
 
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          widget.post.text,
+          style: const TextStyle(fontSize: 16),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _showControls = !_showControls;
-        });
-      },
-      child: Stack(
-        fit: StackFit.expand,
+    return Card(
+      margin: const EdgeInsets.all(8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Vídeo
-          _isInitialized
-              ? VideoPlayer(_controller!)
-              : const Center(child: CircularProgressIndicator()),
-          
-          // Overlay para os controles
-          if (_showControls || !_isPlaying)
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: Alignment.topCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.7),
-                    Colors.transparent,
-                  ],
-                  stops: const [0.0, 0.5],
-                ),
-              ),
-            ),
-          
-          // Botão de play/pause
-          if (_showControls)
-            Center(
-              child: IconButton(
-                icon: Icon(
-                  _isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                  size: 70,
-                  color: Colors.white.withOpacity(0.8),
-                ),
-                onPressed: _togglePlayPause,
-              ),
-            ),
-          
-          // Informações do autor
-          Positioned(
-            bottom: 20,
-            left: 10,
-            right: 10,
+          // Cabeçalho com informações do autor
+          Padding(
+            padding: const EdgeInsets.all(8.0),
             child: Row(
               children: [
-                // Avatar do autor
                 CircleAvatar(
-                  radius: 20,
-                  backgroundColor: Colors.grey,
                   backgroundImage: widget.post.author.avatarUrl != null
-                      ? CachedNetworkImageProvider(widget.post.author.avatarUrl!)
-                      : null,
-                  child: widget.post.author.avatarUrl == null
-                      ? const Icon(Icons.person, color: Colors.white)
+                      ? NetworkImage(widget.post.author.avatarUrl!)
                       : null,
                 ),
-                const SizedBox(width: 10),
-                // Nome do autor
-                Expanded(
-                  child: Text(
-                    widget.post.author.displayName,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.post.author.displayName ?? widget.post.author.handle,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                    Text(
+                      '@${widget.post.author.handle}',
+                      style: TextStyle(color: Colors.grey[600]),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
+          
+          // Conteúdo principal
+          Expanded(
+            child: _buildContent(),
+          ),
         ],
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _chewieController?.dispose();
+    _controller?.dispose();
+    super.dispose();
   }
 }
