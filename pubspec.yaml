@@ -33,6 +33,7 @@ dependencies:
   atproto: ^0.13.3
   atproto_core: ^0.11.2
   video_player: ^2.7.0
+  chewie: ^1.7.4
   atproto_oauth: ^0.1.0
   http: ^1.2.1
   get_it: ^7.6.4
